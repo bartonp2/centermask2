@@ -77,24 +77,20 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on):
             gt_classes.append(gt_classes_per_image)
 
         if maskiou_on:
-            cropped_mask = crop(instances_per_image.gt_masks.polygons, instances_per_image.proposal_boxes.tensor)
-            cropped_mask = torch.tensor(
-                [mask_utils.area(mask_utils.frPyObjects([p for p in obj], box[3]-box[1], box[2]-box[0])).sum().astype(float)
-                for obj, box in zip(cropped_mask.polygons, instances_per_image.proposal_boxes.tensor)]
-                )
-                
-            mask_ratios.append(
-                (cropped_mask / instances_per_image.gt_masks.area())
-                .to(device=pred_mask_logits.device).clamp(min=0., max=1.)
+            cropped_masks = instances_per_image.gt_masks.crop_and_resize(instances_per_image.proposal_boxes.tensor,
+                                                                         mask_side_len)
+
+            mask_ratios.append((cropped_masks.sum(dim=[1,2]).double() / instances_per_image.gt_masks.tensor.sum(dim=[1,2])
+                                ).clamp(min=0., max=1.)
             )
-        
+
         gt_masks_per_image = instances_per_image.gt_masks.crop_and_resize(
             instances_per_image.proposal_boxes.tensor, mask_side_len
         ).to(device=pred_mask_logits.device)
         # A tensor of shape (N, M, M), N=#instances in the image; M=mask_side_len
         gt_masks.append(gt_masks_per_image)
 
-    #gt_classes = cat(gt_classes, dim=0)
+    # gt_classes = cat(gt_classes, dim=0)
 
     if len(gt_masks) == 0:
         gt_classes = torch.LongTensor(gt_classes)
@@ -119,8 +115,8 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on):
         gt_classes = torch.zeros(total_num_masks, dtype=torch.int64)
     else:
         indices = torch.arange(total_num_masks)
-        gt_classes = cat(gt_classes, dim=0) #ywlee
-        pred_mask_logits = pred_mask_logits[indices, gt_classes] # (num_mask, Hmask, Wmask)
+        gt_classes = cat(gt_classes, dim=0)  # ywlee
+        pred_mask_logits = pred_mask_logits[indices, gt_classes]  # (num_mask, Hmask, Wmask)
 
     if gt_masks.dtype == torch.bool:
         gt_masks_bool = gt_masks
@@ -154,10 +150,10 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on):
 
         pred_masks = pred_mask_logits > 0
 
-        mask_targets_full_area = gt_masks.sum(dim=[1,2]) / mask_ratios
+        mask_targets_full_area = gt_masks.sum(dim=[1, 2]) / mask_ratios
 
-        mask_ovr_area = (pred_masks * gt_masks).sum(dim=[1,2]).float()
-        mask_union_area = pred_masks.sum(dim=[1,2]) + mask_targets_full_area - mask_ovr_area
+        mask_ovr_area = (pred_masks * gt_masks).sum(dim=[1, 2]).float()
+        mask_union_area = pred_masks.sum(dim=[1, 2]) + mask_targets_full_area - mask_ovr_area
         value_1 = torch.ones(pred_masks.shape[0], device=gt_masks.device).double()
         value_0 = torch.zeros(pred_masks.shape[0], device=gt_masks.device)
         mask_union_area = torch.max(mask_union_area, value_1)
